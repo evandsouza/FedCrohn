@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ======================
+# DATA (IGNORE ALL RAW DATA)
+# ======================
+data/
+
+# If you later want small samples, use:
+# !data/sample/
+
+# ======================
+# MODELS (OPTIONAL)
+# ======================
+*.t
+*.pkl
+
+# Logs
+*.log
