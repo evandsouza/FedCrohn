@@ -72,15 +72,15 @@ with st.sidebar:
     st.info("Raw exome data never leaves each hospital. Only model weights are shared.")
 
 # ── Title ─────────────────────────────────────────────────────────────────────
-st.title("🧬 Crohn's Disease Genomic Risk Prediction")
+st.title("Crohn's Disease Genomic Risk Prediction")
 st.caption("Privacy-preserving federated learning across simulated hospital nodes — Graph Attention Network on whole-exome sequencing data")
 st.divider()
 
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Model Performance",
-    "🧬 Gene Importance",
-    "🏥 Federated Architecture",
-    "📋 About"
+    "Model Performance",
+    "Gene Importance",
+    "Federated Architecture",
+    "   About"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
