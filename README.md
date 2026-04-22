@@ -112,3 +112,16 @@ Exp2 simulates the performance of a FL GI methods for CD prediction when several
 Please report bugs at the following mail address:
 daniele DoT raimondi aT kuleuven DoT be
 
+## Dataset Setup
+
+This project requires external datasets that are NOT included in this repository.
+
+Download from:
+- Dataset for FedEnhanced (Kaggle dataset): https://www.kaggle.com/datasets/evanlukedsouza/datasets-for-fedenhanced
+
+Place them in:
+
+data/
+  marshalledP3/
+  phenopediaCrohnGenes/
+  string_db/
