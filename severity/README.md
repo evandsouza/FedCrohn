@@ -6,7 +6,23 @@ trained federatedly across four real hospitals.
 Nothing in `sources/` is modified. All changes are runtime monkey-patches
 applied from the notebook, so the original FedCrohn pipeline is untouched and
 still runnable.
+## Quick start (Kaggle — no downloads)
 
+Everything is already set up as a Kaggle dataset, GPU included:
+
+1. Open [`bhanavi1231/hmp2-severity`](https://www.kaggle.com/datasets/bhanavi1231/hmp2-severity)
+2. **New Notebook** (or Copy & Edit an existing one) — the dataset attaches automatically
+3. Upload `fedcrohn_severity.ipynb` from this folder (File → Import Notebook)
+4. Settings → Accelerator → **GPU T4 x2**, Internet → **Off**
+5. Run setup cells 1-7, then any experiment cell
+
+The dataset already contains `sources/`, `marshalledP3/`, the HMP2 files, and
+the four modules — nothing to download or configure.
+
+Mount path is `/kaggle/input/datasets/bhanavi1231/hmp2-severity`, which is the
+CONFIG default.
+
+---
 ## Why the dataset changed
 
 CAGI2/3/4 has whole-exome sequencing but **no severity labels**, so a severity
