@@ -65,7 +65,7 @@ class EnvAwareGATCrohnModel(nn.Module):
         if adj is None:
             adj = self.adj
         gene_emb = self.graph_encoder(x, adj)
-        env_emb = self.env_encoder(env)
+        env_emb = self.env_encoder(env) * 3.0
         combined = torch.cat([gene_emb, env_emb], dim=1)
         logits = self.classifier(combined)
         return torch.sigmoid(logits).squeeze(-1)
@@ -75,6 +75,26 @@ class EnvAwareGATCrohnModel(nn.Module):
         with torch.no_grad():
             first_layer = self.env_encoder[0].weight
             return torch.abs(first_layer).mean(dim=0)
+
+    def get_gene_importance(self, adj=None):
+        """Return a simple per-gene importance score based on the graph encoder output."""
+        if adj is None:
+            adj = self.adj
+        if adj.dim() == 2:
+            adj = adj.unsqueeze(0).expand(1, -1, -1)
+        with torch.no_grad():
+            deg = adj.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            importance = (adj / deg).mean(dim=1)
+            return importance.squeeze(0)
+
+    def get_combined_importance(self, adj=None):
+        """Return both gene and environment importance summaries."""
+        gene_importance = self.get_gene_importance(adj=adj)
+        env_importance = self.get_env_importance()
+        return {
+            "gene_importance": gene_importance,
+            "env_importance": env_importance,
+        }
 
     def simulate_environment_shift(self, x, env_low, env_high, adj=None):
         p_low = self(x, env_low, adj=adj)

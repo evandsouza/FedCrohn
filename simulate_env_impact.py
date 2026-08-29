@@ -1,9 +1,12 @@
+import os
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 
 from sources.EnvAwareGAT import EnvAwareGATCrohnModel
 
 
-def main():
+def main(save_fig=True, out_dir="results"):
     torch.manual_seed(7)
 
     num_genes = 12
@@ -38,16 +41,62 @@ def main():
         high_risk_pred = model(x, env_high, adj=adj)
         env_importance = model.get_env_importance()
 
-    print("Low-risk environment prediction:", baseline_pred.tolist())
-    print("High-risk environment prediction:", high_risk_pred.tolist())
-    print("Predicted change in risk:")
-    for i in range(len(baseline_pred)):
-        delta = float(high_risk_pred[i] - baseline_pred[i])
-        print(f"  Patient {i + 1}: +{delta:.3f} absolute risk shift")
+    baseline = np.array(baseline_pred.tolist())
+    high_risk = np.array(high_risk_pred.tolist())
+    delta = high_risk - baseline
 
+    print("Low-risk environment prediction:", baseline.tolist())
+    print("High-risk environment prediction:", high_risk.tolist())
+    print("Predicted change in risk:")
+    for i in range(len(baseline)):
+        print(f"  Patient {i + 1}: {delta[i]:+.4f} absolute risk shift")
+
+    env_imp = env_importance.cpu().numpy() if isinstance(env_importance, torch.Tensor) else np.array(env_importance)
     print("\nLearned environment importance (absolute mean weight per factor):")
-    for idx, val in enumerate(env_importance.tolist()):
-        print(f"  Factor {idx + 1}: {val:.4f}")
+    env_names = ["smoking", "diet", "pollution", "antibiotic"]
+    for idx, val in enumerate(env_imp.tolist()):
+        name = env_names[idx] if idx < len(env_names) else f"factor_{idx+1}"
+        print(f"  {name}: {val:.4f}")
+
+    # Create plots
+    if save_fig:
+        os.makedirs(out_dir, exist_ok=True)
+        labels = [f"P{i+1}" for i in range(len(baseline))]
+        x_idx = np.arange(len(labels))
+        width = 0.35
+
+        fig, axs = plt.subplots(1, 3, figsize=(15, 4))
+
+        # Grouped bar: baseline vs high-risk predictions
+        axs[0].bar(x_idx - width/2, baseline, width, label='Low-risk')
+        axs[0].bar(x_idx + width/2, high_risk, width, label='High-risk')
+        axs[0].set_xticks(x_idx)
+        axs[0].set_xticklabels(labels)
+        axs[0].set_ylabel('Predicted risk')
+        axs[0].set_title('Predictions per patient')
+        axs[0].legend()
+
+        # Delta bar
+        axs[1].bar(x_idx, delta, color='orange')
+        axs[1].set_xticks(x_idx)
+        axs[1].set_xticklabels(labels)
+        axs[1].set_title('Delta (high - low)')
+        axs[1].axhline(0, color='k', linewidth=0.6)
+
+        # Environment importance
+        axs[2].bar(range(len(env_imp)), env_imp, color='green')
+        axs[2].set_xticks(range(len(env_imp)))
+        axs[2].set_xticklabels(env_names[:len(env_imp)])
+        axs[2].set_title('Learned env importance')
+
+        plt.tight_layout()
+        out_path = os.path.join(out_dir, 'env_demo.png')
+        fig.savefig(out_path)
+        print(f"Saved figure to {out_path}")
+        try:
+            plt.show()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

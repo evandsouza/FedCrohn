@@ -73,8 +73,18 @@ class CagiRealClient(fl.client.NumPyClient):
 		self.X = data[0]
 		self.Y = data[1]	
 		# Instantiate model
-		self.net = GCN.BaselineNN(len(self.X[0][0]), len(self.X[0]), None, geneList, "baseline_")
+		# Use a small env_dim prototype (4 factors)
+		self.env_dim = 4
+		self.net = GCN.BaselineNN(len(self.X[0][0]), len(self.X[0]), None, geneList, "baseline_", env_dim=self.env_dim)
 		self.wrapper = GCN.NNwrapper(self.net)
+		# create synthetic environment vectors per sample (placeholder)
+		try:
+			import numpy as _np
+			self.E = _np.random.rand(len(self.X), self.env_dim).astype(_np.float32)
+		except Exception:
+			self.E = None
+		# attach to wrapper so training/predict use it
+		self.wrapper.E = self.E
 
 	def get_parameters(self, config):
 		return get_params(self.net)

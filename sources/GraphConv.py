@@ -89,29 +89,75 @@ class GraphConvolution(t.nn.Module):
 			return output
 
 class BaselineNN(t.nn.Module):
-	def __init__(self, genesize, numGenes, p, geneList, name = "NN"):
+	def __init__(self, genesize, numGenes, p, geneList, name = "NN", env_dim=0):
 		super(BaselineNN, self).__init__()		
 		os.system("mkdir -p models")
 		self.name = name
 		
 		self.geneInputSize = genesize
 		self.numGenes = numGenes
+		self.env_dim = env_dim
 		
 		self.nn = t.nn.Sequential( t.nn.Linear(self.geneInputSize, 1), t.nn.LeakyReLU())
-		self.final = t.nn.Sequential(t.nn.Dropout(0.1), t.nn.Linear(self.numGenes, 1))
+		final_in = self.numGenes
+		if self.env_dim and self.env_dim > 0:
+			# create small env encoder
+			self.env_encoder = t.nn.Sequential(t.nn.Linear(self.env_dim, 16), t.nn.ReLU(), t.nn.Linear(16, 8), t.nn.ReLU())
+			final_in = self.numGenes + 8
+		else:
+			self.env_encoder = None
+
+		self.final = t.nn.Sequential(t.nn.Dropout(0.1), t.nn.Linear(final_in, 1))
 		#self.final = t.nn.Sequential(t.nn.Dropout(0.1), t.nn.Linear(self.numGenes, 10), t.nn.LeakyReLU(), t.nn.Linear(10,1))
 		self.apply(self.init_weights)
 		
-	def forward(self, x, GET_ACT = False):	
-		#print x.size()	
-		o1 = self.nn(x)
-		#print o.size()
-		o = self.final(o1.squeeze())
-		#o = (t.sum(o.squeeze(), 1)/o.size(1)).unsqueeze(1)		
-		if GET_ACT:
-			return o1, o
+	def forward(self, x, env=None, GET_ACT = False):    
+		# x: [batch, num_genes, geneInputSize]
+		o1 = self.nn(x)  # [batch, num_genes, 1]
+		gene_feat = o1.squeeze(2) if o1.dim() == 3 else o1.squeeze()
+		# gene_feat: [batch, num_genes]
+		if self.env_encoder is not None:
+			if env is None:
+				raise ValueError("Environment tensor is required when env_dim > 0.")
+			env_emb = self.env_encoder(env) * 3.0
+			combined = t.cat([gene_feat, env_emb], dim=1)
 		else:
-			return o
+			combined = gene_feat
+
+		out = self.final(combined)
+		if GET_ACT:
+			return gene_feat, out
+		else:
+			return out
+
+	def get_gene_importance(self):
+		"""Return absolute contribution of each gene inferred from final layer weights."""
+		# final linear is self.final[1]
+		try:
+			lin = self.final[1]
+			w = lin.weight.data.abs().cpu().numpy()  # shape (1, final_in)
+			# first self.numGenes entries correspond to gene contributions
+			gene_w = w[0, :self.numGenes]
+			# normalize
+			if gene_w.sum() == 0:
+				return gene_w
+			return gene_w / (gene_w.max() + 1e-12)
+		except Exception:
+			return None
+
+	def get_env_importance(self):
+		"""Return absolute mean importance of each environment feature if encoder present."""
+		if getattr(self, 'env_encoder', None) is None:
+			return None
+		try:
+			first_layer = self.env_encoder[0]
+			w = first_layer.weight.data.abs().cpu().numpy()  # shape (out, in)
+			imp = w.mean(axis=0)
+			if imp.sum() == 0:
+				return imp
+			return imp / (imp.max() + 1e-12)
+		except Exception:
+			return None
 	
 	def init_weights(self, m):
 		if isinstance(m, t.nn.Conv1d) or isinstance(m, t.nn.Linear) or isinstance(m, t.nn.Bilinear) or isinstance(m, GraphConvolution):
@@ -223,21 +269,27 @@ class GraphConvModel(t.nn.Module):
 
 class myDataset(Dataset):
     
-	def __init__(self, X, Y):	
+	def __init__(self, X, Y, E=None):    
 		if Y == None:
 			Y = []
 			for x in X:
-				Y.append([0]*len(x))		
-		assert len(Y) == len(X)		
+				Y.append([0]*len(x))        
+		assert len(Y) == len(X)        
 		self.X = t.FloatTensor(X)
 		self.Y = t.LongTensor(Y)
+		if E is not None:
+			self.E = t.FloatTensor(E)
+		else:
+			self.E = None
 
-		
 	def __len__(self):
 		return len(self.X)
 
 	def __getitem__(self, idx):
-		return self.X[idx], self.Y[idx]
+		if self.E is None:
+			return self.X[idx], self.Y[idx]
+		else:
+			return self.X[idx], self.Y[idx], self.E[idx]
 
 class NNwrapper():
 
@@ -246,91 +298,97 @@ class NNwrapper():
 			self.model = t.load(model)
 		else:
 			self.model = model
-	
+    
 	def fit(self, originalX, originalY, epochs = 50, batch_size=20, save_model_every=10, warmStart = 0, weight_decay = 0.001, learning_rate = 1e-3, silent = False):
 		########DATASET###########
-		dataset = myDataset(originalX, originalY)
-		
-		#######MODEL##############		
-		
-		self.model.train()	
+		env_data = getattr(self, 'E', None)
+		dataset = myDataset(originalX, originalY, env_data)
+        
+		#######MODEL##############        
+        
+		self.model.train()    
 		print ("Start training")
 		########LOSS FUNCTION######
 		lossfn = LossWrapperCE(t.nn.CrossEntropyLoss(weight=None, size_average=False, ignore_index=-1, reduce=True), dummyColumn=True)
-		#lossfn = t.nn.BCELoss(size_average=False)		
-		#loss_fn = t.nn.MSELoss(size_average=True)
-		#loss_fn = t.nn.CrossEntropyLoss(size_average=False)
-		
-		########OPTIMIZER##########	
-		self.learning_rate = learning_rate		
+        
+		########OPTIMIZER##########    
+		self.learning_rate = learning_rate        
 		parameters = self.model.parameters()
-		#parameters = list(self.model.g.parameters())+list(self.model.final2.parameters())+list(self.model.pathLayer.parameters())
-		#print parameters
-		#raw_input()
-		#print "Training %d parameters" % len(list(parameters))
 		optimizer = t.optim.RMSprop(parameters, lr=self.learning_rate, weight_decay=weight_decay)
 		scheduler = t.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.3, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08)
-		
+        
 		########DATALOADER#########
 		loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, sampler=None, num_workers=0)
-		
+        
 		e = 1 + warmStart
 		minLoss = 1000000000
-		ofp = open("models/"+self.model.name+".TrainLog","w")		
-		while e < epochs  + warmStart:			
+		ofp = open("models/"+self.model.name+".TrainLog","w")        
+		while e < epochs  + warmStart:            
 			errTot = 0
 			i = 1
 			start = time.time()
 			for sample in loader:
 				optimizer.zero_grad()
-				x, y = sample
-				#print y
-				yp = self.model.forward(Variable(x))
-				#print(yp.shape, y.shape, x.shape)
+				# sample can be (x,y) or (x,y,e)
+				if len(sample) == 2:
+					x, y = sample
+					yp = self.model.forward(Variable(x))
+				else:
+					x, y, evec = sample
+					yp = self.model.forward(Variable(x), Variable(evec))
 				if len(yp.shape) == 1:
 					continue
 				loss = lossfn(yp, Variable(y))
-				loss.backward()	
+				loss.backward()    
 				optimizer.step()
 				errTot += loss.data
-				i+=batch_size						
-				perc = (100*i/float(len(dataset))	)	
-				#stdout.write("\nepoch=%d %d (%3.2f%%), errBatch=%f" % (e, i, perc, loss.data[0]))
-				#stdout.flush()				
-			end = time.time()		
-			if not silent:				
-				print (" epoch %d, ERRORTOT: %f (%fs)" % (e, errTot, end-start))
+				i+=batch_size                        
+			end = time.time()        
+			print (" epoch %d, ERRORTOT: %f (%fs)" % (e, errTot, end-start))
 			scheduler.step(errTot)
 			if e % save_model_every == 0:
 				print ("Store model ", e)
-				t.save(self.model, "models/"+self.model.name+".iter_"+str(e)+".t")				
-			stdout.flush()	
-										
-			e += 1	
+				t.save(self.model, "models/"+self.model.name+".iter_"+str(e)+".t")                
+			stdout.flush()    
+			e += 1    
 		t.save(self.model, "models/"+self.model.name+".final.t")
-		ofp.close()		
-	
+		ofp.close()        
+    
 	def predict(self, X, Y = None, batch_size=-1, GET_ACT = False):
 		self.model.eval()
 		if batch_size == -1:
 			batch_size = len(X)
 		print ("Predicting...")
-		dataset = myDataset(X, Y)
+		env_data = getattr(self, 'E', None)
+		dataset = myDataset(X, Y, env_data)
 		loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, sampler=None, num_workers=0)
 		preds1 = []
 		act = []
 		for sample in loader:
-			x, y = sample
-			if GET_ACT == False:
-				y_pred = t.nn.functional.sigmoid(self.model.forward(Variable(x)))
-				preds1 += y_pred.data.squeeze().tolist()			
-				return preds1
+			if len(sample) == 2:
+				x, y = sample
+				if GET_ACT == False:
+					y_pred = t.nn.functional.sigmoid(self.model.forward(Variable(x)))
+					preds1 += y_pred.data.squeeze().tolist()
+				else:
+					gene_act, y_pred = self.model.forward(Variable(x), GET_ACT = GET_ACT)
+					y_pred = t.nn.functional.sigmoid(y_pred)
+					preds1 += y_pred.data.squeeze().tolist()
+					act += gene_act.data.squeeze().tolist()
 			else:
-				gene_act, y_pred = self.model.forward(Variable(x), GET_ACT = GET_ACT)	
-				y_pred = t.nn.functional.sigmoid(y_pred)
-				preds1 += y_pred.data.squeeze().tolist()
-				act += gene_act.data.squeeze().tolist() 
-				return act, preds1
+				x, y, evec = sample
+				if GET_ACT == False:
+					y_pred = t.nn.functional.sigmoid(self.model.forward(Variable(x), Variable(evec)))
+					preds1 += y_pred.data.squeeze().tolist()
+				else:
+					gene_act, y_pred = self.model.forward(Variable(x), Variable(evec), GET_ACT = GET_ACT)
+					y_pred = t.nn.functional.sigmoid(y_pred)
+					preds1 += y_pred.data.squeeze().tolist()
+					act += gene_act.data.squeeze().tolist()
+		if GET_ACT:
+			return act, preds1
+		else:
+			return preds1
 
 		
 	

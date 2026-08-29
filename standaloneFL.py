@@ -84,7 +84,9 @@ def main(args):
 
 		testX = tmpTest[0]
 		testY = tmpTest[1]
-		net = GCN.BaselineNN(len(testX[0][0]), len(testX[0]), None, geneList, "baseline_")
+		# enable env_dim prototype
+		env_dim = 4
+		net = GCN.BaselineNN(len(testX[0][0]), len(testX[0]), None, geneList, "baseline_", env_dim=env_dim)
 		strategy = fl.server.strategy.FedAvg(evaluate_fn=get_evaluate_fn(net, testX, testY), fraction_fit=1, fraction_evaluate=1, min_fit_clients=NUM_CLIENTS, min_evaluate_clients=NUM_CLIENTS, min_available_clients=NUM_CLIENTS)#, fraction_fit=1, fraction_evaluate=1, min_fit_clients=2, min_evaluate_clients=2, min_available_clients=2)
 		# start simulation
 		tmpRes = fl.simulation.start_simulation(
@@ -118,8 +120,16 @@ class CagiRealClient(fl.client.NumPyClient):
 		self.Y = data[int(cid)][1]	
 		self.cid = cid
 		# Instantiate model
-		self.net = GCN.BaselineNN(len(self.X[0][0]), len(self.X[0]), None, geneList, "baseline_")
+		self.env_dim = 4
+		self.net = GCN.BaselineNN(len(self.X[0][0]), len(self.X[0]), None, geneList, "baseline_", env_dim=self.env_dim)
 		self.wrapper = GCN.NNwrapper(self.net)
+		# synthetic env vectors per sample
+		try:
+			import numpy as _np
+			self.E = _np.random.rand(len(self.X), self.env_dim).astype(_np.float32)
+		except Exception:
+			self.E = None
+		self.wrapper.E = self.E
 
 	def get_parameters(self, config):
 		return get_params(self.net)
@@ -227,7 +237,33 @@ def get_evaluate_fn(model, X, Y):
 		state_dict = OrderedDict({k: t.tensor(v) for k, v in params_dict})
 		model.load_state_dict(state_dict, strict=True)
 		wrapper = GCN.NNwrapper(model)
+		# attach synthetic env vectors for evaluation if model expects them
+		try:
+			if hasattr(model, 'env_dim') and model.env_dim and model.env_dim > 0:
+				import numpy as _np
+				wrapper.E = _np.random.rand(len(X), model.env_dim).astype(_np.float32)
+		except Exception:
+			wrapper.E = None
 		Yp = wrapper.predict(X, batch_size=len(X))
+
+		# Log gene and environment importance (if available)
+		try:
+			gene_imp = None
+			env_imp = None
+			if hasattr(model, 'get_gene_importance'):
+				gene_imp = model.get_gene_importance()
+			if hasattr(model, 'get_env_importance'):
+				env_imp = model.get_env_importance()
+			if gene_imp is not None:
+				# print a compact summary (first 10 genes and top-3)
+				print("Gene importance (normalized, first 10):", gene_imp[:10].tolist())
+				# report top-3 indices
+				sorted_idx = list((-gene_imp).argsort())[:3]
+				print("Top-3 genes by importance indices:", sorted_idx)
+			if env_imp is not None:
+				print("Env importance (normalized):", env_imp.tolist())
+		except Exception as e:
+			print("Error computing importances:", e)
 
 		sen, spe, acc, bac, pre, mcc, aucScoreGood, auprc = U.getScoresSVR(Yp, Y, threshold=None, invert = False, PRINT = True, CURVES = False, SAVEFIG=None)	
 		# Return statistics
